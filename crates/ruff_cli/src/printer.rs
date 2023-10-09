@@ -15,7 +15,7 @@ use ruff_linter::linter::FixTable;
 use ruff_linter::logging::LogLevel;
 use ruff_linter::message::{
     AzureEmitter, Emitter, EmitterContext, GithubEmitter, GitlabEmitter, GroupedEmitter,
-    JsonEmitter, JsonLinesEmitter, JunitEmitter, PylintEmitter, TextEmitter,
+    JsonEmitter, JsonLinesEmitter, JunitEmitter, PylintEmitter, TextEmitter, SarifEmitter,
 };
 use ruff_linter::notify_user;
 use ruff_linter::registry::{AsRule, Rule};
@@ -232,6 +232,9 @@ impl Printer {
             }
             SerializationFormat::Azure => {
                 AzureEmitter.emit(writer, &diagnostics.messages, &context)?;
+            }
+            SerializationFormat::Sarif => {
+                SarifEmitter.emit(writer, &diagnostics.messages, &context)?;
             }
         }
 

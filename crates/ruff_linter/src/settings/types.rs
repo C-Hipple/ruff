@@ -276,6 +276,7 @@ pub enum SerializationFormat {
     Gitlab,
     Pylint,
     Azure,
+    Sarif,
 }
 
 impl Default for SerializationFormat {
