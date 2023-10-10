@@ -12,7 +12,20 @@ use crate::message::{Emitter, EmitterContext, Message};
 use crate::registry::AsRule;
 
 #[derive(Default)]
-pub struct SarifEmitter;
+pub struct SarifEmitter{
+    applied_rules: Vec<String>
+}
+
+impl SarifEmitter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_applied_rules(mut self, rules: vec<>) -> Self {
+        self
+    }
+
+}
 
 impl Emitter for SarifEmitter {
     fn emit(
@@ -36,9 +49,10 @@ impl Serialize for ExpandedMessages<'_> {
     where
         S: Serializer,
     {
-        let header = json!(
+        let header = json!({
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
             "version": "2.1.0",
+        }
         );
 
         let mut s = serializer.serialize_seq(Some(self.messages.len()))?;
@@ -53,13 +67,13 @@ impl Serialize for ExpandedMessages<'_> {
     }
 }
 
-pub(crate) fn get_applied_rules() ->
+// pub(crate) fn get_applied_rules() ->
 
 pub(crate) fn group_messages_by_rule_id(messages: &[Message]) -> Vec<(String, Vec<&Message>)> {
     let mut map = std::collections::HashMap::new();
 
     for message in messages {
-        let rule_code = message.kind.rule().id().to_string();
+        let rule_code = message.kind.rule().noqa_code().to_string();
         map.entry(rule_code).or_insert_with(Vec::new).push(message);
     }
 

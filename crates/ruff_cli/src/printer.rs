@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+
 use std::fmt::Display;
 use std::hash::Hash;
 use std::io::Write;
@@ -234,7 +235,9 @@ impl Printer {
                 AzureEmitter.emit(writer, &diagnostics.messages, &context)?;
             }
             SerializationFormat::Sarif => {
-                SarifEmitter.emit(writer, &diagnostics.messages, &context)?;
+                SarifEmitter
+                    .with_applied_rules(&rules)
+                    .emit(writer, &diagnostics.messages, &context)?;
             }
         }
 
