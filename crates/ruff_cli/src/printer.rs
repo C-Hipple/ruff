@@ -235,7 +235,16 @@ impl Printer {
                 AzureEmitter.emit(writer, &diagnostics.messages, &context)?;
             }
             SerializationFormat::Sarif => {
-                SarifEmitter
+                // this gets the rules which were found.  A start so we can get the rest of
+                // code working
+                let rules = diagnostics
+                    .messages
+                    .iter()
+                    .map(|message| message.kind.rule())
+                    .unique()
+                    .collect::<Vec<_>>();
+
+                SarifEmitter::default()
                     .with_applied_rules(&rules)
                     .emit(writer, &diagnostics.messages, &context)?;
             }

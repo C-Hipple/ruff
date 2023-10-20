@@ -9,11 +9,13 @@ use ruff_source_file::SourceCode;
 use ruff_text_size::Ranged;
 
 use crate::message::{Emitter, EmitterContext, Message};
-use crate::registry::AsRule;
+use crate::registry::{AsRule, Rule};
+
+type SarifRule = Rule;
 
 #[derive(Default)]
-pub struct SarifEmitter{
-    applied_rules: Vec<String>
+pub struct SarifEmitter {
+    applied_rules: Vec<SarifRule>,
 }
 
 impl SarifEmitter {
@@ -21,11 +23,12 @@ impl SarifEmitter {
         Self::default()
     }
 
-    pub fn with_applied_rules(mut self, rules: vec<>) -> Self {
+    pub fn with_applied_rules(mut self, rules: &Vec<Rule>) -> Self {
+        self.applied_rules = rules.clone();
         self
     }
-
 }
+
 
 impl Emitter for SarifEmitter {
     fn emit(
@@ -34,9 +37,48 @@ impl Emitter for SarifEmitter {
         messages: &[Message],
         _context: &EmitterContext,
     ) -> anyhow::Result<()> {
+
+        let header = json!({
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [{
+                "tool": {
+                    "driver": {
+                        "name": "ruffc",
+                        "informationUri": "https://github.com/astral-sh/ruff",
+                        "rules": self.applied_rules
+                    }
+                }
+            }]
+        });
+
+        serde_json::to_writer_pretty(writer, &header)?;
         serde_json::to_writer_pretty(writer, &ExpandedMessages { messages })?;
 
         Ok(())
+    }
+}
+
+
+impl Serialize for SarifRule {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        json!({
+            "id": self.noqa_code(),
+            "name": self.name(),
+            "fullDescription": {
+                "text": self.description(),
+            },
+            "helpUri": self.url(),
+            "properties": {
+                "category": self.category(),
+                "severity": self.severity(),
+                "tags": self.tags(),
+            }
+        })
+        .serialize(serializer)
     }
 }
 
@@ -49,21 +91,16 @@ impl Serialize for ExpandedMessages<'_> {
     where
         S: Serializer,
     {
-        let header = json!({
-            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-            "version": "2.1.0",
-        }
-        );
-
         let mut s = serializer.serialize_seq(Some(self.messages.len()))?;
+        s.serialize_element(&header)?;
 
         for message in self.messages {
             let result = message_to_sarif_result(message);
             s.serialize_element(&result)?;
         }
 
-
-        s.end()
+        let res = s.end();
+        res
     }
 }
 
@@ -107,6 +144,7 @@ pub(crate) fn message_to_sarif_result(message: &Message) -> Value {
     })
 }
 
+
 struct ExpandedEdits<'a> {
     edits: &'a [Edit],
     source_code: &'a SourceCode<'a, 'a>,
@@ -142,7 +180,7 @@ mod tests {
 
     #[test]
     fn output() {
-        let mut emitter = SarifEmitter;
+        let mut emitter = SarifEmitter::default();
         let content = capture_emitter_output(&mut emitter, &create_messages());
 
         assert_snapshot!(content);
