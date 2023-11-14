@@ -9,36 +9,71 @@ use ruff_source_file::SourceCode;
 use ruff_text_size::Ranged;
 
 use crate::message::{Emitter, EmitterContext, Message};
-use crate::registry::{AsRule, Rule};
+use crate::registry::{AsRule, Rule, Linter, RuleNamespace};
+use crate::settings::rule_table::RuleTable;
 
-type SarifRule = Rule;
-
-#[derive(Default)]
-pub struct SarifEmitter {
-    applied_rules: Vec<SarifRule>,
+#[derive(Debug, Clone)]
+struct SarifRule<'a> {
+    name: &'a str,
+    code: String,
+    linter: &'a str,
+    summary: &'a str,
+    message_formats: &'a [&'a str],
+    fix: String,
+    explanation: Option<&'a str>,
+    preview: bool,
+    url: Option<String>,
 }
 
-impl SarifEmitter {
+impl<'a> SarifRule<'a> {
+    fn from_rule(rule: Rule) -> Self {
+        let code = rule.noqa_code().to_string();
+        let (linter, _) = Linter::parse_code(&code).unwrap();
+        let fix = rule.fixable().to_string();
+        Self {
+            name: rule.as_ref(),
+            code,
+            linter: linter.name(),
+            summary: rule.message_formats()[0],
+            message_formats: rule.message_formats(),
+            fix,
+            explanation: rule.explanation(),
+            preview: rule.is_preview() || rule.is_nursery(),
+            url: rule.url(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct SarifEmitter<'a > {
+    applied_rules: Vec<&'a SarifRule<'a>>,
+}
+
+impl SarifEmitter<'_> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn with_applied_rules(mut self, rules: &Vec<Rule>) -> Self {
-        self.applied_rules = rules.clone();
+    pub fn with_applied_rules(mut self, rule_table: RuleTable) -> Self {
+        let mut applied_rules = Vec::new();
+
+        for rule in rule_table.iter_enabled() {
+            applied_rules.push(SarifRule::from_rule(rule.to_owned()).to_owned());
+        }
+
+        self.applied_rules = applied_rules;
         self
     }
 }
 
-
-impl Emitter for SarifEmitter {
+impl Emitter for SarifEmitter<'_> {
     fn emit(
         &mut self,
         writer: &mut dyn Write,
         messages: &[Message],
         _context: &EmitterContext,
     ) -> anyhow::Result<()> {
-
-        let header = json!({
+        let output = json!({
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
             "version": "2.1.0",
             "runs": [{
@@ -48,52 +83,97 @@ impl Emitter for SarifEmitter {
                         "informationUri": "https://github.com/astral-sh/ruff",
                         "rules": self.applied_rules
                     }
-                }
-            }]
+                },
+                //"artifacts": &ExpandedSarifMessages { messages: artifacts_from_messages(messages) },
+                "results": &ExpandedSarifMessages { messages },
+            }],
         });
-
-        serde_json::to_writer_pretty(writer, &header)?;
-        serde_json::to_writer_pretty(writer, &ExpandedMessages { messages })?;
+        serde_json::to_writer_pretty(writer, &output)?;
 
         Ok(())
     }
 }
 
-
-impl Serialize for SarifRule {
+impl Serialize for SarifRule<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         json!({
-            "id": self.noqa_code(),
-            "name": self.name(),
-            "fullDescription": {
-                "text": self.description(),
+            "id": self.code,
+            "shortDescription": {
+                "text": self.summary,
             },
-            "helpUri": self.url(),
+            "fullDescription": {
+                "text": self.explanation,
+            },
+            "helpUri": self.url,
             "properties": {
-                "category": self.category(),
-                "severity": self.severity(),
-                "tags": self.tags(),
-            }
+                "category": self.linter,
+                //"severity": self.severity(),
+                //"tags": self.tags(),
+            },
         })
-        .serialize(serializer)
+            .serialize(serializer)
     }
 }
 
-struct ExpandedMessages<'a> {
+type Artifact = Message;
+
+
+impl Serialize for Artifact {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer,
+    {
+        json!({
+            "location": {
+                "uri": self.filename(),
+                "region": {
+                    "startLine": self.start(),
+                    "startColumn": self.start(),
+                    "endLine": self.end(),
+                    "endColumn": self.end(),
+                }
+            }
+        })
+            .serialize(serializer)
+    }
+}
+
+// fn artifacts_from_messages(messages: &[Message]) -> &[Artifact]{
+//     let artifacts: Vec<&Artifact>;
+//     for message in messages {
+//         artifacts.push(message as &Artifact);
+//         // let source_code = message.file.to_source_code();
+
+//         // let start_location = source_code.source_location(message.start());
+//         // let end_location = source_code.source_location(message.end());
+//         // let noqa_location = source_code.source_location(message.noqa_offset);
+
+//         // let artifact = Artifact {
+//         //     range: message.range,
+//         //     kind: message.kind,
+//         //     fix: message.fix,
+//         //     file: message.file,
+//         //     noqa_offset: message.noqa_offset,
+//         // };
+//         // artifacts.push(&artifact);
+
+//     }
+//     artifacts.as_slice()
+//     //messages.iter().map(|m| m as &Artifact).collect::<Vec<Artifact>>().as_slice()
+// }
+
+struct ExpandedSarifMessages<'a> {
     messages: &'a [Message],
 }
 
-impl Serialize for ExpandedMessages<'_> {
+impl Serialize for ExpandedSarifMessages<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut s = serializer.serialize_seq(Some(self.messages.len()))?;
-        s.serialize_element(&header)?;
-
         for message in self.messages {
             let result = message_to_sarif_result(message);
             s.serialize_element(&result)?;
@@ -144,7 +224,6 @@ pub(crate) fn message_to_sarif_result(message: &Message) -> Value {
     })
 }
 
-
 struct ExpandedEdits<'a> {
     edits: &'a [Edit],
     source_code: &'a SourceCode<'a, 'a>,
@@ -163,7 +242,6 @@ impl Serialize for ExpandedEdits<'_> {
                 "location": self.source_code.source_location(edit.start()),
                 "end_location": self.source_code.source_location(edit.end())
             });
-
             s.serialize_element(&value)?;
         }
 

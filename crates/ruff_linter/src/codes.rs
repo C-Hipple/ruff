@@ -7,10 +7,13 @@ use std::fmt::Formatter;
 use crate::registry::{AsRule, Linter};
 use crate::rule_selector::is_single_rule_selector;
 use crate::rules;
+use serde::Serialize;
+
+
 
 use strum_macros::{AsRefStr, EnumIter};
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct NoqaCode(&'static str, &'static str);
 
 impl NoqaCode {

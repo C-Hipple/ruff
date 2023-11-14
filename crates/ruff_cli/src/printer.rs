@@ -8,6 +8,7 @@ use anyhow::Result;
 use bitflags::bitflags;
 use colored::Colorize;
 use itertools::{iterate, Itertools};
+use ruff_workspace::resolver::PyprojectConfig;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
 
@@ -22,6 +23,8 @@ use ruff_linter::notify_user;
 use ruff_linter::registry::{AsRule, Rule};
 use ruff_linter::settings::flags;
 use ruff_linter::settings::types::SerializationFormat;
+
+//use ruff_workspace::{find_settings_toml, parse_pyproject_toml};
 
 use crate::diagnostics::Diagnostics;
 
@@ -156,6 +159,7 @@ impl Printer {
         &self,
         diagnostics: &Diagnostics,
         writer: &mut dyn Write,
+        config: Option<PyprojectConfig>,
     ) -> Result<()> {
         if matches!(self.log_level, LogLevel::Silent) {
             return Ok(());
@@ -235,17 +239,14 @@ impl Printer {
                 AzureEmitter.emit(writer, &diagnostics.messages, &context)?;
             }
             SerializationFormat::Sarif => {
-                // this gets the rules which were found.  A start so we can get the rest of
-                // code working
-                let rules = diagnostics
-                    .messages
-                    .iter()
-                    .map(|message| message.kind.rule())
-                    .unique()
-                    .collect::<Vec<_>>();
-
+                let config = match config {
+                    Some(config) => config,
+                    None => {
+                        panic!("No config found");
+                    }
+                };
                 SarifEmitter::default()
-                    .with_applied_rules(&rules)
+                    .with_applied_rules(config.settings.linter.rules)
                     .emit(writer, &diagnostics.messages, &context)?;
             }
         }
