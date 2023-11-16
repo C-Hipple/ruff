@@ -1,15 +1,16 @@
 use std::io::Write;
+use url::Url;
 
 use serde::ser::SerializeSeq;
 use serde::{Serialize, Serializer};
-use serde_json::{json, Value};
+use serde_json::json;
 
 use ruff_diagnostics::Edit;
 use ruff_source_file::SourceCode;
 use ruff_text_size::Ranged;
 
 use crate::message::{Emitter, EmitterContext, Message};
-use crate::registry::{AsRule, Rule, Linter, RuleNamespace};
+use crate::registry::{AsRule, Linter, Rule, RuleNamespace};
 use crate::settings::rule_table::RuleTable;
 
 #[derive(Debug, Clone)]
@@ -31,7 +32,7 @@ impl<'a> SarifRule<'a> {
         let (linter, _) = Linter::parse_code(&code).unwrap();
         let fix = rule.fixable().to_string();
         Self {
-            name: rule.as_ref(),
+            name: rule.to_owned().into(),
             code,
             linter: linter.name(),
             summary: rule.message_formats()[0],
@@ -44,9 +45,33 @@ impl<'a> SarifRule<'a> {
     }
 }
 
+// This is the "rules" field in the Sarif output under "tool"
+impl Serialize for SarifRule<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        json!({
+            "id": self.code,
+            "shortDescription": {
+                "text": self.summary,
+            },
+            "fullDescription": {
+                "text": self.explanation,
+            },
+            "helpUri": self.url,
+            "properties": {
+                "category": self.linter,
+                //"severity": self.severity(),
+                //"tags": self.tags(),
+            },
+        })
+        .serialize(serializer)
+    }
+}
 #[derive(Default)]
-pub struct SarifEmitter<'a > {
-    applied_rules: Vec<&'a SarifRule<'a>>,
+pub struct SarifEmitter<'a> {
+    applied_rules: Vec<SarifRule<'a>>,
 }
 
 impl SarifEmitter<'_> {
@@ -73,6 +98,8 @@ impl Emitter for SarifEmitter<'_> {
         messages: &[Message],
         _context: &EmitterContext,
     ) -> anyhow::Result<()> {
+        let results = group_messages_by_rule_id(messages);
+
         let output = json!({
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
             "version": "2.1.0",
@@ -84,8 +111,9 @@ impl Emitter for SarifEmitter<'_> {
                         "rules": self.applied_rules
                     }
                 },
-                //"artifacts": &ExpandedSarifMessages { messages: artifacts_from_messages(messages) },
-                "results": &ExpandedSarifMessages { messages },
+                // TODO: Add artifacts
+                //"artifacts": &SarifResult { messages: artifacts_from_messages(messages) },
+                "results": results,
             }],
         });
         serde_json::to_writer_pretty(writer, &output)?;
@@ -94,51 +122,26 @@ impl Emitter for SarifEmitter<'_> {
     }
 }
 
-impl Serialize for SarifRule<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        json!({
-            "id": self.code,
-            "shortDescription": {
-                "text": self.summary,
-            },
-            "fullDescription": {
-                "text": self.explanation,
-            },
-            "helpUri": self.url,
-            "properties": {
-                "category": self.linter,
-                //"severity": self.severity(),
-                //"tags": self.tags(),
-            },
-        })
-            .serialize(serializer)
-    }
-}
+// type Artifact = Message;
 
-type Artifact = Message;
-
-
-impl Serialize for Artifact {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer,
-    {
-        json!({
-            "location": {
-                "uri": self.filename(),
-                "region": {
-                    "startLine": self.start(),
-                    "startColumn": self.start(),
-                    "endLine": self.end(),
-                    "endColumn": self.end(),
-                }
-            }
-        })
-            .serialize(serializer)
-    }
-}
+// impl Serialize for Artifact {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//         where S: Serializer,
+//     {
+//         json!({
+//             "location": {
+//                 "uri": self.filename(),
+//                 "region": {
+//                     "startLine": self.start(),
+//                     "startColumn": self.start(),
+//                     "endLine": self.end(),
+//                     "endColumn": self.end(),
+//                 }
+//             }
+//         })
+//             .serialize(serializer)
+//     }
+// }
 
 // fn artifacts_from_messages(messages: &[Message]) -> &[Artifact]{
 //     let artifacts: Vec<&Artifact>;
@@ -164,65 +167,114 @@ impl Serialize for Artifact {
 //     //messages.iter().map(|m| m as &Artifact).collect::<Vec<Artifact>>().as_slice()
 // }
 
-struct ExpandedSarifMessages<'a> {
-    messages: &'a [Message],
+struct Location {
+    uri: String,
+    index: usize,
+    start_line: usize,
+    start_column: usize,
 }
 
-impl Serialize for ExpandedSarifMessages<'_> {
+impl Serialize for Location {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut s = serializer.serialize_seq(Some(self.messages.len()))?;
-        for message in self.messages {
-            let result = message_to_sarif_result(message);
-            s.serialize_element(&result)?;
-        }
+        json!({
+            "physicalLocation": {
+                "artifactLocation": {
+                    "uri": self.uri,
+                    "index": 0,
+                },
+                "region": {
+                    "startLine": self.start_line,
+                    "startColumn": self.start_column,
+                }
+            }
+        })
+        .serialize(serializer)
+    }
+}
 
-        let res = s.end();
-        res
+struct SarifResult {
+    rule: Rule,
+    level: String,
+    message: String,
+    locations: Vec<Location>,
+}
+
+impl SarifResult {
+    fn from_messages(messages: Vec<&Message>) -> Self {
+        let locations = messages
+            .iter()
+            .map(|m| Location {
+                uri: Url::from_file_path(m.filename()).unwrap().to_string(),
+                index: 0,
+                start_line: m.start().to_usize(),
+                start_column: 0, // does ruff currently support column numbers?
+            })
+            .collect::<Vec<Location>>();
+        Self {
+            rule: messages[0].kind.rule().to_owned(),
+            level: "error".to_string(),
+            message: messages[0].kind.name.to_owned(),
+            locations: locations,
+        }
+    }
+}
+
+impl Serialize for SarifResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        json!({
+            "level": self.level,
+            "message": {
+                "text": self.message,
+            },
+            "locations": self.locations,
+            "ruleId": self.rule.noqa_code().to_string(),
+        })
+        .serialize(serializer)
     }
 }
 
 // pub(crate) fn get_applied_rules() ->
+pub(crate) fn group_messsag_by_rule() {}
 
-pub(crate) fn group_messages_by_rule_id(messages: &[Message]) -> Vec<(String, Vec<&Message>)> {
+// Ruff outputs each individual finding
+// Sarif groups findings by rule, so we build each mesasge into the Location vector for all found rules.
+fn group_messages_by_rule_id(messages: &[Message]) -> Vec<SarifResult> {
     let mut map = std::collections::HashMap::new();
 
     for message in messages {
         let rule_code = message.kind.rule().noqa_code().to_string();
         map.entry(rule_code).or_insert_with(Vec::new).push(message);
     }
-
-    map.into_iter().collect()
+    let mut results = Vec::new();
+    for (rule_code, messages) in map {
+        let result = SarifResult::from_messages(messages);
+        results.push(result);
+    }
+    results
 }
 
-pub(crate) fn message_to_sarif_result(message: &Message) -> Value {
-    let source_code = message.file.to_source_code();
+// fn message_to_sarif_result(message: &Message) -> Value {
+//     let source_code = message.file.to_source_code();
 
-    let fix = message.fix.as_ref().map(|fix| {
-        json!({
-            "applicability": fix.applicability(),
-            "message": message.kind.suggestion.as_deref(),
-            "edits": &ExpandedEdits { edits: fix.edits(), source_code: &source_code },
-        })
-    });
+//     let start_location = source_code.source_location(message.start());
+//     let end_location = source_code.source_location(message.end());
+//     let noqa_location = source_code.source_location(message.noqa_offset);
 
-    let start_location = source_code.source_location(message.start());
-    let end_location = source_code.source_location(message.end());
-    let noqa_location = source_code.source_location(message.noqa_offset);
-
-    json!({
-        "code": message.kind.rule().noqa_code().to_string(),
-        "url": message.kind.rule().url(),
-        "message": message.kind.body,
-        "fix": fix,
-        "location": start_location,
-        "end_location": end_location,
-        "filename": message.filename(),
-        "noqa_row": noqa_location.row
-    })
-}
+//     json!({
+//         "code": message.kind.rule().noqa_code().to_string(),
+//         "url": message.kind.rule().url(),
+//         "location": start_location,
+//         "end_location": end_location,
+//         "filename": message.filename(),
+//         "noqa_row": noqa_location.row
+//     })
+// }
 
 struct ExpandedEdits<'a> {
     edits: &'a [Edit],
