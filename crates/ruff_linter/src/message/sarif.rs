@@ -9,6 +9,7 @@ use ruff_diagnostics::Edit;
 use ruff_source_file::SourceCode;
 use ruff_text_size::Ranged;
 
+use crate::VERSION;
 use crate::message::{Emitter, EmitterContext, Message};
 use crate::registry::{AsRule, Linter, Rule, RuleNamespace};
 use crate::settings::rule_table::RuleTable;
@@ -108,7 +109,9 @@ impl Emitter for SarifEmitter<'_> {
                     "driver": {
                         "name": "ruffc",
                         "informationUri": "https://github.com/astral-sh/ruff",
-                        "rules": self.applied_rules
+                        "rules": self.applied_rules,
+                        "version": VERSION.to_string(),
+
                     }
                 },
                 // TODO: Add artifacts
