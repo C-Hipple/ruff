@@ -5,14 +5,12 @@ use serde::ser::SerializeSeq;
 use serde::{Serialize, Serializer};
 use serde_json::json;
 
-use ruff_diagnostics::Edit;
-use ruff_source_file::SourceCode;
-use ruff_text_size::Ranged;
+use ruff_source_file::OneIndexed;
 
-use crate::VERSION;
 use crate::message::{Emitter, EmitterContext, Message};
 use crate::registry::{AsRule, Linter, Rule, RuleNamespace};
 use crate::settings::rule_table::RuleTable;
+use crate::VERSION;
 
 #[derive(Debug, Clone)]
 struct SarifRule<'a> {
@@ -99,7 +97,10 @@ impl Emitter for SarifEmitter<'_> {
         messages: &[Message],
         _context: &EmitterContext,
     ) -> anyhow::Result<()> {
-        let results = group_messages_by_rule_id(messages);
+        let results = messages
+            .iter()
+            .map(|message| SarifResult::from_message(message))
+            .collect::<Vec<_>>();
 
         let output = json!({
             "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
@@ -107,15 +108,14 @@ impl Emitter for SarifEmitter<'_> {
             "runs": [{
                 "tool": {
                     "driver": {
-                        "name": "ruffc",
+                        "name": "ruff",
                         "informationUri": "https://github.com/astral-sh/ruff",
                         "rules": self.applied_rules,
                         "version": VERSION.to_string(),
 
                     }
                 },
-                // TODO: Add artifacts
-                //"artifacts": &SarifResult { messages: artifacts_from_messages(messages) },
+                "artifacts": Artifact::from_messages(messages),
                 "results": results,
             }],
         });
@@ -125,56 +125,37 @@ impl Emitter for SarifEmitter<'_> {
     }
 }
 
-// type Artifact = Message;
+type Artifact = Message;
 
-// impl Serialize for Artifact {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//         where S: Serializer,
-//     {
-//         json!({
-//             "location": {
-//                 "uri": self.filename(),
-//                 "region": {
-//                     "startLine": self.start(),
-//                     "startColumn": self.start(),
-//                     "endLine": self.end(),
-//                     "endColumn": self.end(),
-//                 }
-//             }
-//         })
-//             .serialize(serializer)
-//     }
-// }
+impl Artifact {
+    fn from_messages(messages: &[Message]) -> Vec<&Artifact> {
+        let mut artifacts = Vec::new();
+        for message in messages {
+            artifacts.push(message as &Artifact);
+        }
+        artifacts
+    }
+}
 
-// fn artifacts_from_messages(messages: &[Message]) -> &[Artifact]{
-//     let artifacts: Vec<&Artifact>;
-//     for message in messages {
-//         artifacts.push(message as &Artifact);
-//         // let source_code = message.file.to_source_code();
+impl Serialize for Artifact {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        json!({
+            "location": {
+                "uri": Url::from_file_path(self.filename()).unwrap().to_string(),
+            }
+        })
+        .serialize(serializer)
+    }
+}
 
-//         // let start_location = source_code.source_location(message.start());
-//         // let end_location = source_code.source_location(message.end());
-//         // let noqa_location = source_code.source_location(message.noqa_offset);
-
-//         // let artifact = Artifact {
-//         //     range: message.range,
-//         //     kind: message.kind,
-//         //     fix: message.fix,
-//         //     file: message.file,
-//         //     noqa_offset: message.noqa_offset,
-//         // };
-//         // artifacts.push(&artifact);
-
-//     }
-//     artifacts.as_slice()
-//     //messages.iter().map(|m| m as &Artifact).collect::<Vec<Artifact>>().as_slice()
-// }
 
 struct Location {
     uri: String,
-    index: usize,
-    start_line: usize,
-    start_column: usize,
+    start_line: OneIndexed,
+    start_column: OneIndexed,
 }
 
 impl Serialize for Location {
@@ -186,7 +167,7 @@ impl Serialize for Location {
             "physicalLocation": {
                 "artifactLocation": {
                     "uri": self.uri,
-                    "index": 0,
+                    //"index": 0,
                 },
                 "region": {
                     "startLine": self.start_line,
@@ -206,21 +187,17 @@ struct SarifResult {
 }
 
 impl SarifResult {
-    fn from_messages(messages: Vec<&Message>) -> Self {
-        let locations = messages
-            .iter()
-            .map(|m| Location {
-                uri: Url::from_file_path(m.filename()).unwrap().to_string(),
-                index: 0,
-                start_line: m.start().to_usize(),
-                start_column: 0, // does ruff currently support column numbers?
-            })
-            .collect::<Vec<Location>>();
+    fn from_message(message: &Message) -> Self {
+        let start_location = message.compute_start_location();
         Self {
-            rule: messages[0].kind.rule().to_owned(),
+            rule: message.kind.rule(),
             level: "error".to_string(),
-            message: messages[0].kind.name.to_owned(),
-            locations: locations,
+            message: message.kind.name.to_owned(),
+            locations: vec![Location {
+                uri: Url::from_file_path(message.filename()).unwrap().to_string(),
+                start_line: start_location.row,
+                start_column: start_location.column
+            }],
         }
     }
 }
@@ -239,68 +216,6 @@ impl Serialize for SarifResult {
             "ruleId": self.rule.noqa_code().to_string(),
         })
         .serialize(serializer)
-    }
-}
-
-// pub(crate) fn get_applied_rules() ->
-pub(crate) fn group_messsag_by_rule() {}
-
-// Ruff outputs each individual finding
-// Sarif groups findings by rule, so we build each mesasge into the Location vector for all found rules.
-fn group_messages_by_rule_id(messages: &[Message]) -> Vec<SarifResult> {
-    let mut map = std::collections::HashMap::new();
-
-    for message in messages {
-        let rule_code = message.kind.rule().noqa_code().to_string();
-        map.entry(rule_code).or_insert_with(Vec::new).push(message);
-    }
-    let mut results = Vec::new();
-    for (rule_code, messages) in map {
-        let result = SarifResult::from_messages(messages);
-        results.push(result);
-    }
-    results
-}
-
-// fn message_to_sarif_result(message: &Message) -> Value {
-//     let source_code = message.file.to_source_code();
-
-//     let start_location = source_code.source_location(message.start());
-//     let end_location = source_code.source_location(message.end());
-//     let noqa_location = source_code.source_location(message.noqa_offset);
-
-//     json!({
-//         "code": message.kind.rule().noqa_code().to_string(),
-//         "url": message.kind.rule().url(),
-//         "location": start_location,
-//         "end_location": end_location,
-//         "filename": message.filename(),
-//         "noqa_row": noqa_location.row
-//     })
-// }
-
-struct ExpandedEdits<'a> {
-    edits: &'a [Edit],
-    source_code: &'a SourceCode<'a, 'a>,
-}
-
-impl Serialize for ExpandedEdits<'_> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut s = serializer.serialize_seq(Some(self.edits.len()))?;
-
-        for edit in self.edits {
-            let value = json!({
-                "content": edit.content().unwrap_or_default(),
-                "location": self.source_code.source_location(edit.start()),
-                "end_location": self.source_code.source_location(edit.end())
-            });
-            s.serialize_element(&value)?;
-        }
-
-        s.end()
     }
 }
 
