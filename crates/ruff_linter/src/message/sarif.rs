@@ -115,7 +115,6 @@ impl Emitter for SarifEmitter<'_> {
 
                     }
                 },
-                "artifacts": Artifact::from_messages(messages),
                 "results": results,
             }],
         });
@@ -124,33 +123,6 @@ impl Emitter for SarifEmitter<'_> {
         Ok(())
     }
 }
-
-type Artifact = Message;
-
-impl Artifact {
-    fn from_messages(messages: &[Message]) -> Vec<&Artifact> {
-        let mut artifacts = Vec::new();
-        for message in messages {
-            artifacts.push(message as &Artifact);
-        }
-        artifacts
-    }
-}
-
-impl Serialize for Artifact {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        json!({
-            "location": {
-                "uri": Url::from_file_path(self.filename()).unwrap().to_string(),
-            }
-        })
-        .serialize(serializer)
-    }
-}
-
 
 struct Location {
     uri: String,
