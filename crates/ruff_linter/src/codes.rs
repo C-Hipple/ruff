@@ -4,10 +4,11 @@
 /// `--select`. For pylint this is e.g. C0414 and E0118 but also C and E01.
 use std::fmt::Formatter;
 
+use serde::Serialize;
+
 use crate::registry::{AsRule, Linter};
 use crate::rule_selector::is_single_rule_selector;
 use crate::rules;
-use serde::Serialize;
 
 
 

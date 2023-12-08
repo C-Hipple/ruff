@@ -1,5 +1,4 @@
 use std::cmp::Reverse;
-
 use std::fmt::Display;
 use std::hash::Hash;
 use std::io::Write;
@@ -23,8 +22,6 @@ use ruff_linter::notify_user;
 use ruff_linter::registry::{AsRule, Rule};
 use ruff_linter::settings::flags;
 use ruff_linter::settings::types::SerializationFormat;
-
-//use ruff_workspace::{find_settings_toml, parse_pyproject_toml};
 
 use crate::diagnostics::Diagnostics;
 
