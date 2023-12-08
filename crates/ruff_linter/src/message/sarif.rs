@@ -184,25 +184,14 @@ mod tests {
     #[test]
     fn valid_json() {
         let content = get_output();
-
         serde_json::from_str::<serde_json::Value>(&content).unwrap();
     }
 
     #[test]
     fn test_results() {
         let content = get_output();
-
-        let results = serde_json::from_str::<serde_json::Value>(content.as_str())
-            .unwrap()
-            .get("runs")
-            .unwrap()
-            .get(0)
-            .unwrap()
-            .get("results")
-            .unwrap()
-            .as_array()
-            .unwrap();
-
-        assert_eq!(results.len(), 2);
+        let sarif = serde_json::from_str::<serde_json::Value>(content.as_str()).unwrap();
+        let results = sarif["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 3);
     }
 }

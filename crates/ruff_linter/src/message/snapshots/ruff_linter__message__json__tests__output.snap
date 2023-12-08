@@ -9,7 +9,7 @@ expression: content
       "column": 10,
       "row": 1
     },
-    "filename": "fib.py",
+    "filename": "/fib.py",
     "fix": {
       "applicability": "sometimes",
       "edits": [
@@ -41,7 +41,7 @@ expression: content
       "column": 6,
       "row": 6
     },
-    "filename": "fib.py",
+    "filename": "/fib.py",
     "fix": {
       "applicability": "sometimes",
       "edits": [
@@ -73,7 +73,7 @@ expression: content
       "column": 5,
       "row": 1
     },
-    "filename": "undef.py",
+    "filename": "/undef.py",
     "fix": null,
     "location": {
       "column": 4,
