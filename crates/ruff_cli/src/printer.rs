@@ -159,7 +159,7 @@ impl Printer {
         &self,
         diagnostics: &Diagnostics,
         writer: &mut dyn Write,
-        config: Option<PyprojectConfig>,
+        config: &PyprojectConfig,
     ) -> Result<()> {
         if matches!(self.log_level, LogLevel::Silent) {
             return Ok(());
@@ -239,12 +239,6 @@ impl Printer {
                 AzureEmitter.emit(writer, &diagnostics.messages, &context)?;
             }
             SerializationFormat::Sarif => {
-                let config = match config {
-                    Some(config) => config,
-                    None => {
-                        panic!("No config found");
-                    }
-                };
                 SarifEmitter::default()
                     .with_applied_rules(config.settings.linter.rules)
                     .emit(writer, &diagnostics.messages, &context)?;

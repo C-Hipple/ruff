@@ -6,7 +6,7 @@ use crate::registry::{Rule, RuleSet, RuleSetIterator};
 
 /// A table to keep track of which rules are enabled
 /// and Whether they should be fixed.
-#[derive(Debug, CacheKey, Default)]
+#[derive(Clone, Debug, CacheKey, Default, Copy)]
 pub struct RuleTable {
     /// Maps rule codes to a boolean indicating if the rule should be fixed.
     enabled: RuleSet,
